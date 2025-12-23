@@ -4,6 +4,9 @@ import dotenv from "dotenv";
 import { MongoClient, ObjectId, ServerApiVersion } from "mongodb";
 import Stripe from "stripe";
 
+import multer from 'multer';
+import path from 'path';
+
 dotenv.config();
 
 const app = express();
@@ -31,6 +34,7 @@ const client = new MongoClient(uri, {
 let parcelCollection;
 let paymentsCollection;
 let serviceCenterCollection;
+let trackingCollection;
 
 async function run() {
     try {
@@ -41,6 +45,7 @@ async function run() {
         parcelCollection = db.collection("parcels");
         paymentsCollection = db.collection("payments");
         serviceCenterCollection = db.collection("service-centers");
+        trackingCollection = db.collection("tracking-logs");
 
     } catch (err) {
         console.error(err);
@@ -182,6 +187,54 @@ app.delete('/parcels/:id', async (req, res) => {
 
 
 
+//tracking api
+app.patch("/tracking", async (req, res) => {
+    try {
+        const { tracking_id, parcel_id, status, location, updated_by = '' } = req.body;
+
+        if (!parcel_id || !status) {
+            return res.status(400).json({ success: false, message: "parcel_id and status are required" });
+        }
+
+        const filter = { tracking_id, parcel_id };
+        const update = {
+            $set: {
+                status,
+                location,
+                updated_by,
+                timestamp: new Date()
+            }
+        };
+
+        // upsert: if a log doesn't exist, create it
+        const result = await trackingCollection.updateOne(filter, update, { upsert: true });
+
+        res.status(200).json({ success: true, modifiedCount: result.modifiedCount, upsertedId: result.upsertedId });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+
+
+
+app.get('/tracking', async (req, res) => {
+    try {
+        const trackingLogs = await trackingCollection.find({}).toArray();
+        res.status(200).json(trackingLogs);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Failed to fetch tracking logs' });
+    }
+});
+
+
+
+
+
+
+
 // Payment Intent API
 
 
@@ -301,6 +354,36 @@ app.post("/create-payment-intent", async (req, res) => {
         console.error(error);
         res.status(500).json({ message: "Payment intent creation failed" });
     }
+});
+
+
+
+
+app.use('/uploads', express.static('uploads'));
+
+
+
+// Multer setup
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, 'uploads/'),
+    filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname);
+        cb(null, file.fieldname + '-' + Date.now() + ext);
+    }
+});
+
+const upload = multer({ storage });
+
+// Example route to upload a single image
+app.post('/uploads', upload.single('image'), (req, res) => {
+    if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
+    res.json({
+        success: true,
+        filePath: `/uploads/${req.file.filename}`
+
+    });
+
+
 });
 
 
